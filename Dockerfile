@@ -1,19 +1,14 @@
 # Stage 1: Build mini apps
 FROM oven/bun:1 AS app-builder
 
-WORKDIR /build
-
-# Build chess app
-COPY apps/chess/package.json apps/chess/bun.lock apps/chess/
 WORKDIR /build/apps/chess
+COPY apps/chess/package.json apps/chess/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY apps/chess/ .
 RUN bun run build
 
-# Build flashcards app
-WORKDIR /build
-COPY apps/flashcards/package.json apps/flashcards/bun.lock apps/flashcards/
 WORKDIR /build/apps/flashcards
+COPY apps/flashcards/package.json apps/flashcards/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY apps/flashcards/ .
 RUN bun run build
@@ -21,20 +16,19 @@ RUN bun run build
 # Stage 2: Production image
 FROM oven/bun:1
 
-WORKDIR /app
+WORKDIR /app/api
 
 # Install API dependencies
-COPY api/package.json api/bun.lock api/
-WORKDIR /app/api
+COPY api/package.json api/bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Copy API source
 COPY api/ .
 
-# Copy pre-built chatbox web frontend
+# Copy pre-built chatbox web frontend (force-added to git)
 COPY chatbox/release/app/dist/renderer/ ./public/
 
-# Copy built mini apps from Stage 1
+# Copy built mini apps
 COPY --from=app-builder /build/apps/chess/dist/ ./public/apps/chess/
 COPY --from=app-builder /build/apps/flashcards/dist/ ./public/apps/flashcards/
 
