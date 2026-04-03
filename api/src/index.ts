@@ -83,6 +83,18 @@ const app = new Elysia()
       return { status: "error", db: "disconnected" };
     }
   })
+  // Debug: check public dir contents
+  .get("/api/debug/public", async () => {
+    const { readdir } = await import("fs/promises");
+    try {
+      const top = await readdir(PUBLIC_DIR);
+      const apps = await readdir(join(PUBLIC_DIR, "apps")).catch(() => []);
+      const chess = await readdir(join(PUBLIC_DIR, "apps/chess")).catch(() => []);
+      return { PUBLIC_DIR, hasPublicDir, top, apps, chess };
+    } catch (e: any) {
+      return { error: e.message, PUBLIC_DIR, hasPublicDir };
+    }
+  })
   // Chat routes
   .use(chatRoutes)
   // Notion OAuth
