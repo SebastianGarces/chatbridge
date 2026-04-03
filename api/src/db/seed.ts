@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { db, schema } from "./index";
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3001";
@@ -75,7 +76,7 @@ async function seed() {
         ],
       },
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({ target: schema.appRegistrations.name, set: { config: sql`excluded.config`, description: sql`excluded.description` } });
 
   // Flashcards app registration
   await db
@@ -155,7 +156,7 @@ async function seed() {
         ],
       },
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({ target: schema.appRegistrations.name, set: { config: sql`excluded.config`, description: sql`excluded.description` } });
 
   // Grokipedia MCP app registration
   await db
@@ -172,7 +173,7 @@ async function seed() {
         // Will be updated to Cloudflare Workers URL after deploy
       },
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({ target: schema.appRegistrations.name, set: { config: sql`excluded.config`, description: sql`excluded.description` } });
 
   // Notion REST app registration
   await db
@@ -234,7 +235,7 @@ async function seed() {
         ],
       },
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({ target: schema.appRegistrations.name, set: { config: sql`excluded.config`, description: sql`excluded.description` } });
 
   console.log("Seed complete!");
   process.exit(0);

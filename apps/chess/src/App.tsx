@@ -10,6 +10,7 @@ type ToolHandler = (
 class ChatBridgeApp {
   private handlers = new Map<string, ToolHandler>();
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  public restoreHandlers: Array<(state: Record<string, unknown>) => void> = [];
 
   constructor() {
     window.addEventListener("message", this.handleMessage.bind(this));
@@ -34,6 +35,16 @@ class ChatBridgeApp {
   private async handleMessage(event: MessageEvent) {
     const data = event.data;
     if (!data?.type) return;
+
+    if (data.type === "state:restore") {
+      // Restore game state from parent after iframe reload
+      if (data.state?.fen) {
+        for (const handler of this.restoreHandlers) {
+          handler(data.state);
+        }
+      }
+      return;
+    }
 
     if (data.type === "tool:invoke") {
       const handler = this.handlers.get(data.tool);
@@ -195,6 +206,26 @@ function App() {
     // Resize periodically until stable
     const resizeInterval = setInterval(sendResize, 500);
     setTimeout(() => clearInterval(resizeInterval), 5000);
+
+    // Restore state after iframe reload
+    app.restoreHandlers.push((state) => {
+      if (state.fen && typeof state.fen === "string") {
+        const restored = new Chess(state.fen as string);
+        gameRef.current = restored;
+        setGame(restored);
+        setGameStarted(true);
+        const history = restored.history();
+        setMoveHistory(history);
+        const turn = restored.turn() === "w" ? "white" : "black";
+        if (restored.isCheckmate()) {
+          setStatus(`Checkmate! ${turn === "white" ? "Black" : "White"} wins!`);
+        } else if (restored.isDraw()) {
+          setStatus("Game drawn!");
+        } else {
+          setStatus(`${turn}'s turn.`);
+        }
+      }
+    });
 
     app.onToolInvoke("resign", () => {
       const g = gameRef.current;

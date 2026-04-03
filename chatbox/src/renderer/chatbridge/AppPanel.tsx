@@ -116,6 +116,16 @@ const AppPanel: FC = () => {
             { type: "app:init", sessionId: activeApp.toolCallId, config: { appId: activeApp.appId, appName: activeApp.appName } },
             "*"
           );
+          // Restore last known state so the app can recover after iframe reload
+          {
+            const ctx = getContexts()[activeApp.appId];
+            if (ctx) {
+              iframeRef.current?.contentWindow?.postMessage(
+                { type: "state:restore", state: ctx },
+                "*"
+              );
+            }
+          }
           iframeReadyRef.current = true;
           // Drain any pending tool invocations and forward to iframe
           {
