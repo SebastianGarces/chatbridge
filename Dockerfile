@@ -5,13 +5,13 @@ WORKDIR /build/apps/chess
 COPY apps/chess/package.json apps/chess/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY apps/chess/ .
-RUN bun run build
+RUN VITE_BASE=/apps/chess/ bun run build
 
 WORKDIR /build/apps/flashcards
 COPY apps/flashcards/package.json apps/flashcards/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY apps/flashcards/ .
-RUN bun run build
+RUN VITE_BASE=/apps/flashcards/ bun run build
 
 # Stage 2: Production image
 FROM oven/bun:1
