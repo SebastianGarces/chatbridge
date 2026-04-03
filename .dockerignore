@@ -2,10 +2,6 @@
 **/.git
 **/.env
 **/.env.local
-**/dist
-!chatbox/release/app/dist/renderer
-!apps/chess/dist
-!apps/flashcards/dist
 *.md
 *.pdf
 mcp/
@@ -15,3 +11,5 @@ chatbox/out
 chatbox/.erb
 chatbox/scripts
 chatbox/team-sharing
+chatbox/test
+chatbox/node_modules
