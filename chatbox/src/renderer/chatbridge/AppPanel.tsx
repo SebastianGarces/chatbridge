@@ -58,10 +58,25 @@ async function requestAiChessMove(
         } else if (typeCode === "9") {
           try {
             const toolCall = JSON.parse(data);
-            if (toolCall.toolName === "chess_make_move" && toolCall.args?.move) {
-              aiMove = toolCall.args.move;
+            console.debug("[chess-ai] tool call in stream:", toolCall.toolName, toolCall.args);
+            if (toolCall.toolName === "chess_make_move") {
+              // args may be object or JSON string depending on AI SDK version
+              const args = typeof toolCall.args === "string" ? JSON.parse(toolCall.args) : toolCall.args;
+              if (args?.move) aiMove = args.move;
             }
           } catch { /* ignore */ }
+        } else if (typeCode === "a") {
+          // Tool result — fallback: extract move from result if we missed it in the call
+          if (!aiMove) {
+            try {
+              const toolResult = JSON.parse(data);
+              const result = toolResult.result;
+              if (result?.lastMove) {
+                console.debug("[chess-ai] extracting move from tool result:", result.lastMove);
+                aiMove = result.lastMove;
+              }
+            } catch { /* ignore */ }
+          }
         }
       }
     }
@@ -166,12 +181,16 @@ const AppPanel: FC = () => {
                 appContext
               )
                 .then(({ move, commentary }) => {
+                  console.debug("[chess-ai] AI response — move:", move, "commentary length:", commentary.length);
                   // Relay move to the board
                   if (move && iframeRef.current?.contentWindow) {
+                    console.debug("[chess-ai] Relaying move to iframe:", move);
                     iframeRef.current.contentWindow.postMessage(
                       { type: "tool:invoke", id: `ai-move-${Date.now()}`, tool: "make_move", params: { move } },
                       "*"
                     );
+                  } else if (!move) {
+                    console.warn("[chess-ai] No move extracted from AI response");
                   }
                   // Push commentary to the main chat
                   if (commentary) {
