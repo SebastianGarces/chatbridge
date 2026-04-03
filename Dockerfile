@@ -25,8 +25,8 @@ RUN bun install --frozen-lockfile
 # Copy API source
 COPY api/ .
 
-# Copy pre-built chatbox web frontend (force-added to git)
-COPY chatbox/release/app/dist/renderer/ ./public/
+# Copy pre-built chatbox web frontend
+COPY web-dist/ ./public/
 
 # Copy built mini apps
 COPY --from=app-builder /build/apps/chess/dist/ ./public/apps/chess/
