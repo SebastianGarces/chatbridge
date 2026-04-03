@@ -81,6 +81,15 @@ async function requestAiChessMove(
       }
     }
 
+    // Last resort: extract move from commentary text (e.g. "I played e5" or "I'll play Nf3")
+    if (!aiMove && commentary) {
+      const moveMatch = commentary.match(/\b(?:I(?:'ll)?\s+(?:play|played|respond with|move)\s+)([A-Za-z][a-z]?\d(?:x[a-z]\d)?(?:=[QRBN])?[+#]?)\b/i);
+      if (moveMatch) {
+        console.debug("[chess-ai] Fallback: extracted move from text:", moveMatch[1]);
+        aiMove = moveMatch[1];
+      }
+    }
+
     return { move: aiMove, commentary };
   } catch {
     return { move: null, commentary: "" };

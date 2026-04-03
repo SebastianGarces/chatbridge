@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./web.C5sjewY6.js","./index.CFKfRldU.js","./vendor-charts.CUkV13oc.js","./vendor-ai.D3ygP7B8.js","./vendor-ui.Bzy49bZc.js","../styles/vendor-ui.J8qAlTB9.css","../styles/index.Ccgq1VL6.css"])))=>i.map(i=>d[i]);
+import{_ as p}from"./vendor-charts.CUkV13oc.js";import{r as t}from"./index.CFKfRldU.js";import"./vendor-ai.D3ygP7B8.js";import"./vendor-ui.Bzy49bZc.js";const _=t("App",{web:()=>p(()=>import("./web.C5sjewY6.js"),__vite__mapDeps([0,1,2,3,4,5,6]),import.meta.url).then(r=>new r.AppWeb)});export{_ as App};
