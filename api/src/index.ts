@@ -49,6 +49,18 @@ async function serveStatic(pathname: string): Promise<Response | null> {
       headers: { "Content-Type": getMimeType(filePath) },
     });
   }
+
+  // Directory index: try index.html inside the directory
+  const indexPath = join(filePath, "index.html");
+  if (indexPath.startsWith(PUBLIC_DIR)) {
+    const indexF = Bun.file(indexPath);
+    if (await indexF.exists()) {
+      return new Response(indexF, {
+        headers: { "Content-Type": "text/html" },
+      });
+    }
+  }
+
   return null;
 }
 
@@ -128,8 +140,9 @@ const server = Bun.serve({
     const staticResponse = await serveStatic(url.pathname);
     if (staticResponse) return staticResponse;
 
-    // SPA fallback: serve index.html for any unmatched route
-    if (hasPublicDir) {
+    // SPA fallback: serve index.html for unmatched routes
+    // but NOT for /apps/* — those are mini apps with their own index.html
+    if (hasPublicDir && !url.pathname.startsWith("/apps/")) {
       return new Response(indexFile, {
         headers: { "Content-Type": "text/html" },
       });
