@@ -67,10 +67,7 @@ async function serveStatic(pathname: string): Promise<Response | null> {
 const app = new Elysia()
   .use(
     cors({
-      origin: [
-        process.env.FRONTEND_URL || "http://localhost:5173",
-        "http://localhost:1212",
-      ],
+      origin: true,
       credentials: true,
     })
   )
@@ -93,20 +90,12 @@ const app = new Elysia()
 
 const port = Number(process.env.PORT) || 3001;
 
-const ALLOWED_ORIGINS = [
-  "http://localhost:1212",
-  "http://localhost:5173",
-  process.env.FRONTEND_URL,
-].filter(Boolean) as string[];
-
 function addCorsHeaders(response: Response, origin: string): Response {
   const headers = new Headers(response.headers);
-  if (ALLOWED_ORIGINS.includes(origin)) {
-    headers.set("Access-Control-Allow-Origin", origin);
-    headers.set("Access-Control-Allow-Credentials", "true");
-    headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  }
+  headers.set("Access-Control-Allow-Origin", origin || "*");
+  headers.set("Access-Control-Allow-Credentials", "true");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -122,8 +111,8 @@ const server = Bun.serve({
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
 
-    // Handle CORS preflight for auth routes
-    if (request.method === "OPTIONS" && url.pathname.startsWith("/api/auth")) {
+    // Handle CORS preflight for all API routes
+    if (request.method === "OPTIONS") {
       return addCorsHeaders(new Response(null, { status: 204 }), origin);
     }
 
