@@ -6,6 +6,7 @@ import {
   IconHelpCircle,
   IconInfoCircle,
   IconLayoutSidebarLeftCollapse,
+  IconLogout,
   IconMessageChatbot,
   IconPhotoPlus,
   IconSettingsFilled,
@@ -23,6 +24,7 @@ import { FORCE_ENABLE_DEV_PAGES } from './dev/devToolsConfig'
 import useNeedRoomForMacWinControls from './hooks/useNeedRoomForWinControls'
 import { useIsSmallScreen, useSidebarWidth } from './hooks/useScreenChange'
 import useVersion from './hooks/useVersion'
+import { useAuthStore } from './chatbridge/auth-store'
 import { navigateToSettings } from './modals/Settings'
 import { trackingEvent } from './packages/event'
 import platform from './platform'
@@ -324,6 +326,15 @@ export default function Sidebar() {
                 label={t('Settings')}
                 leftSection={<ScalableIcon icon={IconSettingsFilled} size={20} />}
                 onClick={() => navigateToSettings()}
+                variant="light"
+                p="xs"
+              />
+              <NavLink
+                c="chatbox-tertiary"
+                className="rounded"
+                label="Logout"
+                leftSection={<ScalableIcon icon={IconLogout} size={20} />}
+                onClick={() => useAuthStore.getState().logout()}
                 variant="light"
                 p="xs"
               />
