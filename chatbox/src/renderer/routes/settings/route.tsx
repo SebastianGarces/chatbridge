@@ -11,6 +11,7 @@ import {
   IconInfoCircle,
   IconKeyboard,
   IconMessages,
+  IconApps,
   IconPlug,
   IconSparkles,
   IconWorldWww,
@@ -70,6 +71,11 @@ const ITEMS = [
     key: 'integrations',
     label: 'Integrations',
     icon: <IconPlug className="w-full h-full" />,
+  },
+  {
+    key: 'app-management',
+    label: 'App Management',
+    icon: <IconApps className="w-full h-full" />,
   },
   {
     key: 'document-parser',

@@ -17,6 +17,7 @@ export const appRoutes = new Elysia({ prefix: "/api/apps" })
         type: schema.appRegistrations.type,
         authType: schema.appRegistrations.authType,
         enabled: schema.appRegistrations.enabled,
+        reviewStatus: schema.appRegistrations.reviewStatus,
       })
       .from(schema.appRegistrations);
 
