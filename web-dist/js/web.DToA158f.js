@@ -1,0 +1,1 @@
+import{W as n}from"./index.DgZw5inl.js";import"./vendor-charts.DJXQnpDh.js";import"./vendor-ai.D3ygP7B8.js";import"./vendor-ui.Bzy49bZc.js";class p extends n{async show(e){}async hide(e){}}export{p as SplashScreenWeb};
