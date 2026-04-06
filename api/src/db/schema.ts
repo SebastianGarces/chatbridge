@@ -86,6 +86,11 @@ export const messages = pgTable("messages", {
 
 export const appTypeEnum = pgEnum("app_type", ["iframe", "mcp", "rest"]);
 export const authTypeEnum = pgEnum("auth_type", ["none", "api_key", "oauth2"]);
+export const appReviewStatusEnum = pgEnum("app_review_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
 
 export const appRegistrations = pgTable("app_registrations", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -128,14 +133,6 @@ export const oauthStates = pgTable("oauth_states", {
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
-
-// ─── App review status ────────────────────────────────────────────
-
-export const appReviewStatusEnum = pgEnum("app_review_status", [
-  "pending",
-  "approved",
-  "rejected",
-]);
 
 export const toolInvocationStatusEnum = pgEnum("tool_invocation_status", [
   "pending",

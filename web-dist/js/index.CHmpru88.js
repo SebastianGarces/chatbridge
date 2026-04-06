@@ -1,0 +1,1 @@
+import{j as o}from"./vendor-ui.Bzy49bZc.js";import{N as t}from"./index.ORpCWn85.js";import"./vendor-ai.D3ygP7B8.js";import"./vendor-charts.8cgyGwQn.js";const s=()=>o.jsx(t,{to:"/"});export{s as component};
