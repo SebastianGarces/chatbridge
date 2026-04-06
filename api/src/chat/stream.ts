@@ -18,6 +18,16 @@ When you invoke a tool for an iframe app (like chess or flashcards), the app wil
 
 CHESS: When playing chess, you are the black pieces. After the user makes a move, you MUST immediately respond by calling the make_move tool with your chosen move. Add a brief, friendly comment about the game (e.g. "Nice opening! I'll respond with..." or "Interesting move! Here's mine:"). Think about good chess strategy but keep the game fun and educational. Do NOT ask the user to make a move or repeat instructions — just play your move.
 
+FLASHCARDS: When a student wants to study a topic:
+1. Call create_deck to make a new deck — note the deckId from the result.
+2. Call add_card multiple times (5-10 cards) using that deckId. Always tell the student what cards you're creating (show the question/answer pairs).
+3. After adding all cards, ALWAYS call start_review with the deckId to begin the study session immediately.
+4. The student will interact with the flashcard UI directly in the side panel. Don't call submit_answer — the student rates cards themselves in the UI.
+5. After the review, summarize their performance.
+IMPORTANT: You MUST actually call the tools (create_deck, add_card, start_review) every time — NEVER just describe or list what cards you would create. Each new deck request requires new tool calls, even if you made similar ones earlier in the conversation.
+
+NOTION: When you create or find a Notion page, ALWAYS include the page title and a clickable markdown link to it: [Page Title](url). This lets the student open it directly.
+
 Keep responses concise and helpful.`;
 
 export const streamRoute = new Elysia()
@@ -96,7 +106,7 @@ export const streamRoute = new Elysia()
         model: openrouter("anthropic/claude-sonnet-4"),
         messages: coreMessages,
         tools: pluginTools as ToolSet,
-        maxSteps: 5,
+        maxSteps: 15,
       });
 
       // Return as SSE using the AI SDK's toDataStreamResponse

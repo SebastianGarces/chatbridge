@@ -422,6 +422,7 @@ function isIframeRender(result: unknown): result is {
   appUrl: string
   toolName: string
   params: Record<string, unknown>
+  message?: string
 } {
   return (
     typeof result === 'object' &&
@@ -434,28 +435,22 @@ function isIframeRender(result: unknown): result is {
 // Trigger to open iframe app in side panel
 const IframeRenderTrigger: FC<{
   part: MessageToolCallPart
-  result: { appId: string; appName: string; appUrl: string; toolName: string; params: Record<string, unknown> }
+  result: { appId: string; appName: string; appUrl: string; toolName: string; params: Record<string, unknown>; message?: string }
 }> = ({ part, result }) => {
   const openApp = useAppPanelStore((s) => s.openApp)
-  const activeApp = useAppPanelStore((s) => s.activeApp)
   const queueToolInvocation = useAppPanelStore((s) => s.queueToolInvocation)
 
-  // Auto-open the panel and queue the tool invocation for the iframe
   useEffect(() => {
-    if (!activeApp || activeApp.appId !== result.appId) {
-      const pathParts = window.location.hash.replace('#', '').split('/')
-      const sessionIdx = pathParts.indexOf('session')
-      const sessionId = sessionIdx >= 0 ? pathParts[sessionIdx + 1] : ''
-      openApp({
-        appId: result.appId,
-        appName: result.appName,
-        appUrl: result.appUrl,
-        toolCallId: part.toolCallId,
-        sessionId,
-      })
-    }
-    // Queue this tool invocation to be forwarded to the iframe
-    console.debug("[iframe-trigger] Queuing tool invocation:", result.toolName, result.params)
+    // Use the conversation ID stored by ChatBridgeModel
+    const sessionId = sessionStorage.getItem('chatbridge-conversation-id') || part.toolCallId
+    // Both openApp and queueToolInvocation are idempotent in the store
+    openApp({
+      appId: result.appId,
+      appName: result.appName,
+      appUrl: result.appUrl,
+      toolCallId: part.toolCallId,
+      sessionId,
+    })
     queueToolInvocation({
       toolName: result.toolName,
       toolCallId: part.toolCallId,
@@ -463,11 +458,13 @@ const IframeRenderTrigger: FC<{
     })
   }, [])
 
+  const displayMessage = result.message || `${result.appName} opened in side panel`
+
   return (
     <Group gap={6} my={4}>
       <IconCheck size={14} color="var(--chatbox-tint-success)" />
       <Text size="sm" c="chatbox-secondary">
-        {result.appName} opened in side panel
+        {displayMessage}
       </Text>
     </Group>
   )

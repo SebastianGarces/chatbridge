@@ -193,11 +193,19 @@ export async function getPluginTools(conversationId?: string, appContext?: Recor
               const deckId = `deck_${Date.now()}`;
               (params as Record<string, unknown>).deckId = deckId;
               syntheticResult.deckId = deckId;
-              syntheticResult.message = `Deck "${(params as any).name}" created.`;
+              syntheticResult.message = `Deck "${(params as any).name}" created successfully. Use this deckId for add_card and start_review calls.`;
             } else if (t.name === "add_card") {
-              syntheticResult.message = `Card added.`;
+              syntheticResult.front = (params as any).front;
+              syntheticResult.back = (params as any).back;
+              syntheticResult.deckId = (params as any).deckId;
+              syntheticResult.message = `Card added: "${(params as any).front}" → "${(params as any).back}"`;
             } else if (t.name === "start_review") {
-              syntheticResult.message = `Review started.`;
+              syntheticResult.deckId = (params as any).deckId;
+              syntheticResult.message = `Review session started. Cards are now shown in the flashcards panel for the student to study.`;
+            } else if (t.name === "submit_answer") {
+              syntheticResult.message = `Answer submitted. Next card shown in the flashcards panel.`;
+            } else if (t.name === "get_stats") {
+              syntheticResult.message = `Stats displayed in the flashcards panel.`;
             }
             return {
               type: "iframe_render",

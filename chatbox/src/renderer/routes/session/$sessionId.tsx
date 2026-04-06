@@ -52,6 +52,7 @@ function RouteComponent() {
     // Insert messages using the same path as normal chat flow
     const userMsg = createMessage('user', userText)
     const assistantMsg = createMessage('assistant', assistantText)
+    assistantMsg.model = 'ChatBridge (chatbridge-default)'
     ;(async () => {
       await chatStore.insertMessage(sid, userMsg)
       await chatStore.insertMessage(sid, assistantMsg)

@@ -169,6 +169,12 @@ export async function updateSessionWithMessages(sessionId: string, updater: Upda
           console.debug('chatStore', 'persist session', sessionId)
           await storage.setItemNow(StorageKeyGenerator.session(sessionId), session)
         }
+        // Update React Query cache with the final accumulated state from the
+        // UpdateQueue flush.  Previously each caller wrote its own intermediate
+        // state via _setSessionCache after awaiting .set(), which caused a race
+        // when multiple callers batched in the same flush — the last caller's
+        // write could overwrite a later caller's messages.
+        _setSessionCache(sessionId, session)
       }
     )
   }
@@ -194,7 +200,6 @@ export async function updateSessionWithMessages(sessionId: string, updater: Upda
       return sessions.map((session) => (session.id === sessionId ? getSessionMeta(updated) : session))
     })
   }
-  _setSessionCache(sessionId, updated)
   return updated
 }
 

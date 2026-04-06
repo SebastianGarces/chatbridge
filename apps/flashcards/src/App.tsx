@@ -5,7 +5,6 @@ import {
   generatorParameters,
   Rating,
   type Card,
-  type RecordLog,
 } from "ts-fsrs";
 
 // ─── Types ─────────────────────────────────────────────────────────
@@ -30,11 +29,19 @@ type ToolHandler = (params: Record<string, unknown>) => unknown | Promise<unknow
 
 class ChatBridgeApp {
   private handlers = new Map<string, ToolHandler>();
+  private boundHandler: (e: MessageEvent) => void;
+  private heartbeatId: ReturnType<typeof setInterval>;
 
   constructor() {
-    window.addEventListener("message", this.handleMessage.bind(this));
-    setInterval(() => window.parent.postMessage({ type: "heartbeat" }, "*"), 5000);
+    this.boundHandler = this.handleMessage.bind(this);
+    window.addEventListener("message", this.boundHandler);
+    this.heartbeatId = setInterval(() => window.parent.postMessage({ type: "heartbeat" }, "*"), 5000);
     window.parent.postMessage({ type: "app:ready" }, "*");
+  }
+
+  destroy() {
+    window.removeEventListener("message", this.boundHandler);
+    clearInterval(this.heartbeatId);
   }
 
   onToolInvoke(name: string, handler: ToolHandler) {
@@ -49,9 +56,20 @@ class ChatBridgeApp {
     window.parent.postMessage({ type: "app:complete", summary }, "*");
   }
 
+  private onSessionChange: ((sessionId: string) => void) | null = null;
+
+  onSession(handler: (sessionId: string) => void) {
+    this.onSessionChange = handler;
+  }
+
   private async handleMessage(event: MessageEvent) {
     const data = event.data;
     if (!data?.type) return;
+    if (data.type === "app:init" && data.sessionId != null) {
+      currentSessionId = data.sessionId || "default";
+      this.onSessionChange?.(data.sessionId);
+      return;
+    }
     if (data.type === "tool:invoke") {
       const handler = this.handlers.get(data.tool);
       if (handler) {
@@ -82,23 +100,62 @@ let idCounter = 0;
 const genId = () => `card_${++idCounter}`;
 const genDeckId = () => `deck_${++idCounter}`;
 
+// ─── Persistence ──────────────────────────────────────────────────
+
+let currentSessionId: string | null = null;
+
+function storageKey() {
+  return currentSessionId
+    ? `chatbridge-flashcards-${currentSessionId}`
+    : "chatbridge-flashcards-decks";
+}
+
+function loadDecks(): Deck[] {
+  try {
+    const raw = localStorage.getItem(storageKey());
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return [];
+}
+
+function saveDecks(decks: Deck[]) {
+  try {
+    localStorage.setItem(storageKey(), JSON.stringify(decks));
+  } catch { /* ignore */ }
+}
+
+// Synchronous data store — tool handlers read/write this immediately so
+// back-to-back invocations (create_deck → add_card → start_review) that
+// arrive in the same queue drain always see the latest state, without
+// waiting for React's async useEffect to update refs.
+let syncDecks: Deck[] = loadDecks();
+let syncReviewQueue: FlashCard[] = [];
+let syncSessionStats = { total: 0, correct: 0 };
+
 function App() {
-  const [decks, setDecks] = useState<Deck[]>([]);
-  const [activeDeckId, setActiveDeckId] = useState<string | null>(null);
+  const [decks, setDecks] = useState<Deck[]>(syncDecks);
+  const [activeDeckId, setActiveDeckId] = useState<string | null>(
+    syncDecks.length > 0 ? syncDecks[syncDecks.length - 1].id : null
+  );
   const [currentCard, setCurrentCard] = useState<FlashCard | null>(null);
   const [isFlipped, setIsFlipped] = useState(false);
   const [reviewQueue, setReviewQueue] = useState<FlashCard[]>([]);
   const [sessionStats, setSessionStats] = useState({ total: 0, correct: 0 });
   const appRef = useRef<ChatBridgeApp | null>(null);
-  const decksRef = useRef<Deck[]>([]);
-  const reviewQueueRef = useRef<FlashCard[]>([]);
-  const sessionStatsRef = useRef({ total: 0, correct: 0 });
 
   const activeDeck = decks.find((d) => d.id === activeDeckId) || null;
 
-  useEffect(() => { decksRef.current = decks; }, [decks]);
-  useEffect(() => { reviewQueueRef.current = reviewQueue; }, [reviewQueue]);
-  useEffect(() => { sessionStatsRef.current = sessionStats; }, [sessionStats]);
+  // Start or restart a review for the active deck (bypasses FSRS scheduling — reviews all cards)
+  const startReview = useCallback((deck: Deck) => {
+    if (deck.cards.length === 0) return;
+    const cards = [...deck.cards];
+    syncReviewQueue = cards.slice(1);
+    syncSessionStats = { total: 0, correct: 0 };
+    setReviewQueue([...syncReviewQueue]);
+    setCurrentCard(cards[0]);
+    setIsFlipped(false);
+    setSessionStats({ ...syncSessionStats });
+  }, []);
 
   const syncState = useCallback(() => {
     appRef.current?.updateState({
@@ -113,6 +170,18 @@ function App() {
     const app = new ChatBridgeApp();
     appRef.current = app;
 
+    // When session changes (chat switch), reload decks for that session
+    app.onSession(() => {
+      syncDecks = loadDecks();
+      syncReviewQueue = [];
+      syncSessionStats = { total: 0, correct: 0 };
+      setDecks([...syncDecks]);
+      setActiveDeckId(syncDecks.length > 0 ? syncDecks[syncDecks.length - 1].id : null);
+      setCurrentCard(null);
+      setReviewQueue([]);
+      setSessionStats({ ...syncSessionStats });
+    });
+
     app.onToolInvoke("create_deck", (params) => {
       const name = params.name as string;
       const description = params.description as string | undefined;
@@ -123,8 +192,17 @@ function App() {
         description,
         cards: [],
       };
-      setDecks((prev) => [...prev, deck]);
+      syncDecks = [...syncDecks, deck];
+      saveDecks(syncDecks);
+      // Reset review state immediately so the UI switches to the new deck
+      syncReviewQueue = [];
+      syncSessionStats = { total: 0, correct: 0 };
+      setDecks([...syncDecks]);
       setActiveDeckId(deck.id);
+      setCurrentCard(null);
+      setReviewQueue([]);
+      setIsFlipped(false);
+      setSessionStats({ ...syncSessionStats });
       return { deckId: deck.id, name: deck.name, message: `Deck "${name}" created.` };
     });
 
@@ -138,31 +216,34 @@ function App() {
         back,
         card: createEmptyCard(),
       };
-      setDecks((prev) =>
-        prev.map((d) =>
-          d.id === deckId ? { ...d, cards: [...d.cards, card] } : d
-        )
+      syncDecks = syncDecks.map((d) =>
+        d.id === deckId ? { ...d, cards: [...d.cards, card] } : d
       );
+      saveDecks(syncDecks);
+      setDecks([...syncDecks]);
       return { cardId: card.id, front, back, message: "Card added." };
     });
 
     app.onToolInvoke("start_review", (params) => {
       const deckId = params.deckId as string;
-      const deck = decksRef.current.find((d) => d.id === deckId);
+      const deck = syncDecks.find((d) => d.id === deckId);
       if (!deck) return { error: `Deck ${deckId} not found` };
-      const due = getDueCards(deck);
-      if (due.length === 0) {
-        return { message: "No cards due for review!", dueCount: 0 };
+      if (deck.cards.length === 0) {
+        return { message: "No cards in deck!", cardCount: 0 };
       }
+      // Review ALL cards (not just FSRS-due) so restart always works
+      const cards = [...deck.cards];
+      syncReviewQueue = cards.slice(1);
+      syncSessionStats = { total: 0, correct: 0 };
       setActiveDeckId(deckId);
-      setReviewQueue(due.slice(1));
-      setCurrentCard(due[0]);
+      setReviewQueue([...syncReviewQueue]);
+      setCurrentCard(cards[0]);
       setIsFlipped(false);
-      setSessionStats({ total: 0, correct: 0 });
+      setSessionStats({ ...syncSessionStats });
       return {
-        message: `Review started! ${due.length} cards due.`,
-        dueCount: due.length,
-        firstCard: { id: due[0].id, front: due[0].front },
+        message: `Review started! ${cards.length} cards to study.`,
+        cardCount: cards.length,
+        firstCard: { id: cards[0].id, front: cards[0].front },
       };
     });
 
@@ -178,54 +259,48 @@ function App() {
       const rating = ratingMap[ratingStr];
       if (rating === undefined) return { error: `Invalid rating: ${ratingStr}` };
 
-      // Find and update the card
-      let updatedCard: FlashCard | null = null;
-      setDecks((prev) =>
-        prev.map((d) => ({
-          ...d,
-          cards: d.cards.map((c) => {
-            if (c.id === cardId) {
-              const log = scheduler.repeat(c.card, new Date());
-              const newCard = log[rating].card;
-              updatedCard = { ...c, card: newCard };
-              return updatedCard;
-            }
-            return c;
-          }),
-        }))
-      );
+      // Update the card in sync store
+      syncDecks = syncDecks.map((d) => ({
+        ...d,
+        cards: d.cards.map((c) => {
+          if (c.id === cardId) {
+            const log = scheduler.repeat(c.card, new Date());
+            return { ...c, card: log[rating].card };
+          }
+          return c;
+        }),
+      }));
+      saveDecks(syncDecks);
+      setDecks([...syncDecks]);
 
       const isCorrect = ratingStr !== "again";
-      setSessionStats((prev) => ({
-        total: prev.total + 1,
-        correct: prev.correct + (isCorrect ? 1 : 0),
-      }));
+      syncSessionStats = {
+        total: syncSessionStats.total + 1,
+        correct: syncSessionStats.correct + (isCorrect ? 1 : 0),
+      };
+      setSessionStats({ ...syncSessionStats });
 
       // Advance to next card
-      const queue = reviewQueueRef.current;
-      if (queue.length > 0) {
-        setCurrentCard(queue[0]);
-        setReviewQueue((prev) => prev.slice(1));
+      if (syncReviewQueue.length > 0) {
+        const next = syncReviewQueue[0];
+        syncReviewQueue = syncReviewQueue.slice(1);
+        setCurrentCard(next);
+        setReviewQueue([...syncReviewQueue]);
         setIsFlipped(false);
         return {
           message: `Rated "${ratingStr}". Next card.`,
-          nextCard: { id: queue[0].id, front: queue[0].front },
-          remaining: queue.length - 1,
+          nextCard: { id: next.id, front: next.front },
+          remaining: syncReviewQueue.length,
         };
       } else {
         setCurrentCard(null);
         setIsFlipped(false);
-        const curStats = sessionStatsRef.current;
-        const stats = {
-          total: curStats.total + 1,
-          correct: curStats.correct + (isCorrect ? 1 : 0),
-        };
         app.complete(
-          `Review complete! ${stats.correct}/${stats.total} correct.`
+          `Review complete! ${syncSessionStats.correct}/${syncSessionStats.total} correct.`
         );
         return {
           message: "Review session complete!",
-          stats,
+          stats: { ...syncSessionStats },
           remaining: 0,
         };
       }
@@ -233,17 +308,25 @@ function App() {
 
     app.onToolInvoke("get_stats", (params) => {
       const deckId = params.deckId as string;
-      const deck = decksRef.current.find((d) => d.id === deckId);
+      const deck = syncDecks.find((d) => d.id === deckId);
       if (!deck) return { error: `Deck ${deckId} not found` };
       const due = getDueCards(deck);
       return {
         deckName: deck.name,
         totalCards: deck.cards.length,
         dueToday: due.length,
-        reviewed: sessionStatsRef.current.total,
-        correct: sessionStatsRef.current.correct,
+        reviewed: syncSessionStats.total,
+        correct: syncSessionStats.correct,
       };
     });
+
+    return () => {
+      app.destroy();
+      // Reset transient state for StrictMode remount — decks persist via localStorage
+      syncDecks = loadDecks();
+      syncReviewQueue = [];
+      syncSessionStats = { total: 0, correct: 0 };
+    };
   }, []);
 
   useEffect(() => {
@@ -254,7 +337,6 @@ function App() {
 
   const handleRate = (rating: string) => {
     if (!currentCard) return;
-    // Trigger the submit_answer tool handler directly
     const ratingMap: Record<string, Rating> = {
       again: Rating.Again,
       hard: Rating.Hard,
@@ -264,29 +346,32 @@ function App() {
     const r = ratingMap[rating];
     if (r === undefined) return;
 
-    // Update card via FSRS
-    setDecks((prev) =>
-      prev.map((d) => ({
-        ...d,
-        cards: d.cards.map((c) => {
-          if (c.id === currentCard.id) {
-            const log = scheduler.repeat(c.card, new Date());
-            return { ...c, card: log[r].card };
-          }
-          return c;
-        }),
-      }))
-    );
+    // Update card via FSRS in sync store
+    syncDecks = syncDecks.map((d) => ({
+      ...d,
+      cards: d.cards.map((c) => {
+        if (c.id === currentCard.id) {
+          const log = scheduler.repeat(c.card, new Date());
+          return { ...c, card: log[r].card };
+        }
+        return c;
+      }),
+    }));
+    saveDecks(syncDecks);
+    setDecks([...syncDecks]);
 
     const isCorrect = rating !== "again";
-    setSessionStats((prev) => ({
-      total: prev.total + 1,
-      correct: prev.correct + (isCorrect ? 1 : 0),
-    }));
+    syncSessionStats = {
+      total: syncSessionStats.total + 1,
+      correct: syncSessionStats.correct + (isCorrect ? 1 : 0),
+    };
+    setSessionStats({ ...syncSessionStats });
 
-    if (reviewQueue.length > 0) {
-      setCurrentCard(reviewQueue[0]);
-      setReviewQueue((prev) => prev.slice(1));
+    if (syncReviewQueue.length > 0) {
+      const next = syncReviewQueue[0];
+      syncReviewQueue = syncReviewQueue.slice(1);
+      setCurrentCard(next);
+      setReviewQueue([...syncReviewQueue]);
       setIsFlipped(false);
     } else {
       setCurrentCard(null);
@@ -298,9 +383,10 @@ function App() {
 
   if (!activeDeck) {
     return (
-      <div style={{ padding: 16, textAlign: "center", color: "#888" }}>
-        <p style={{ fontSize: 14 }}>Waiting for a deck to be created...</p>
-        <p style={{ fontSize: 12, marginTop: 4 }}>
+      <div style={{ padding: 24, textAlign: "center", color: "#aaa", minHeight: "100vh", background: "#1a1a2e", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>&#128218;</div>
+        <p style={{ fontSize: 16, fontWeight: 500, color: "#e0e0e0", margin: "0 0 8px 0" }}>Waiting for a deck to be created...</p>
+        <p style={{ fontSize: 13, color: "#888", margin: 0 }}>
           Ask the AI to "make flashcards about" a topic.
         </p>
       </div>
@@ -308,20 +394,74 @@ function App() {
   }
 
   if (!currentCard) {
+    const sessionComplete = sessionStats.total > 0;
     return (
-      <div style={{ padding: 16, textAlign: "center" }}>
-        <h3 style={{ fontSize: 16, marginBottom: 8 }}>{activeDeck.name}</h3>
-        <p style={{ fontSize: 14, color: "#666" }}>
-          {sessionStats.total > 0
+      <div style={{ padding: 24, textAlign: "center", minHeight: "100vh", background: "#1a1a2e", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>
+          {sessionComplete ? "\u2705" : "\u{1F4DA}"}
+        </div>
+        <h3 style={{ fontSize: 18, marginBottom: 8, color: "#e0e0e0", fontWeight: 600 }}>{activeDeck.name}</h3>
+        <p style={{ fontSize: 14, color: "#aaa", margin: "0 0 16px 0" }}>
+          {sessionComplete
             ? `Session complete! ${sessionStats.correct}/${sessionStats.total} correct.`
-            : `${activeDeck.cards.length} cards in deck. Ask the AI to start a review.`}
+            : `${activeDeck.cards.length} cards in deck.`}
         </p>
+
+        {activeDeck.cards.length > 0 && (
+          <button
+            onClick={() => startReview(activeDeck)}
+            style={{
+              padding: "12px 32px",
+              border: "none",
+              borderRadius: 8,
+              background: "#6366f1",
+              color: "#fff",
+              fontSize: 15,
+              fontWeight: 600,
+              cursor: "pointer",
+              marginBottom: 8,
+            }}
+          >
+            {sessionComplete ? "Review Again" : "Start Review"}
+          </button>
+        )}
+
+        {/* Deck switcher — show other decks if they exist */}
+        {decks.length > 1 && (
+          <div style={{ marginTop: 16 }}>
+            <p style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>Other decks:</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+              {decks.filter(d => d.id !== activeDeckId).map(d => (
+                <button
+                  key={d.id}
+                  onClick={() => {
+                    setActiveDeckId(d.id);
+                    setCurrentCard(null);
+                    syncSessionStats = { total: 0, correct: 0 };
+                    setSessionStats({ ...syncSessionStats });
+                  }}
+                  style={{
+                    padding: "6px 14px",
+                    border: "1px solid #444",
+                    borderRadius: 6,
+                    background: "transparent",
+                    color: "#aaa",
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  {d.name} ({d.cards.length})
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div style={{ padding: 16, maxWidth: 480, margin: "0 auto" }}>
+    <div style={{ padding: 16, maxWidth: 480, margin: "0 auto", minHeight: "100vh", background: "#1a1a2e", color: "#e0e0e0" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 12, color: "#888" }}>
         <span>{activeDeck.name}</span>
         <span>{reviewQueue.length + 1} remaining</span>
@@ -336,18 +476,19 @@ function App() {
           alignItems: "center",
           justifyContent: "center",
           padding: 24,
-          border: "1px solid #e0e0e0",
-          borderRadius: 8,
+          border: "1px solid #333",
+          borderRadius: 12,
           cursor: "pointer",
-          background: isFlipped ? "#f0fdf4" : "#fff",
-          transition: "background 0.2s",
+          background: isFlipped ? "#1b3a2a" : "#252540",
+          transition: "background 0.3s",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
         }}
       >
         <div style={{ textAlign: "center" }}>
-          <p style={{ fontSize: 10, color: "#aaa", marginBottom: 8 }}>
-            {isFlipped ? "ANSWER" : "QUESTION"} — tap to flip
+          <p style={{ fontSize: 11, color: "#888", marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>
+            {isFlipped ? "Answer" : "Question"} — tap to flip
           </p>
-          <p style={{ fontSize: 16, fontWeight: 500 }}>
+          <p style={{ fontSize: 18, fontWeight: 500, lineHeight: 1.5, color: "#f0f0f0" }}>
             {isFlipped ? currentCard.back : currentCard.front}
           </p>
         </div>
@@ -355,7 +496,7 @@ function App() {
 
       {/* Rating buttons */}
       {isFlipped && (
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           {[
             { label: "Again", value: "again", color: "#ef4444" },
             { label: "Hard", value: "hard", color: "#f59e0b" },
@@ -367,13 +508,13 @@ function App() {
               onClick={() => handleRate(btn.value)}
               style={{
                 flex: 1,
-                padding: "8px 0",
+                padding: "10px 0",
                 border: "none",
-                borderRadius: 6,
+                borderRadius: 8,
                 background: btn.color,
                 color: "#fff",
-                fontSize: 13,
-                fontWeight: 500,
+                fontSize: 14,
+                fontWeight: 600,
                 cursor: "pointer",
               }}
             >
@@ -384,7 +525,7 @@ function App() {
       )}
 
       {/* Progress */}
-      <div style={{ marginTop: 8, fontSize: 12, color: "#888", textAlign: "center" }}>
+      <div style={{ marginTop: 12, fontSize: 13, color: "#888", textAlign: "center" }}>
         {sessionStats.total > 0 &&
           `${sessionStats.correct}/${sessionStats.total} correct`}
       </div>

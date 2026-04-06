@@ -6,7 +6,8 @@ import { useAppContextStore } from "./app-context-store";
 import { getApiBase } from "./api-client";
 
 interface AiMoveResult {
-  move: string | null;
+  fen: string | null;
+  moveHistory: string[];
   commentary: string;
 }
 
@@ -29,12 +30,13 @@ async function requestAiChessMove(
       }),
     });
 
-    if (!response.ok) return { move: null, commentary: "" };
+    if (!response.ok) return { fen: null, moveHistory: [], commentary: "" };
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let aiMove: string | null = null;
+    let lastFen: string | null = null;
+    let lastMoveHistory: string[] = [];
     let commentary = "";
 
     while (true) {
@@ -55,44 +57,24 @@ async function requestAiChessMove(
 
         if (typeCode === "0") {
           try { commentary += JSON.parse(data); } catch { /* ignore */ }
-        } else if (typeCode === "9") {
+        } else if (typeCode === "a") {
+          // Capture the FEN from any chess tool result — the LAST one is the final board state
           try {
-            const toolCall = JSON.parse(data);
-            console.debug("[chess-ai] tool call in stream:", toolCall.toolName, toolCall.args);
-            if (toolCall.toolName === "chess_make_move") {
-              // args may be object or JSON string depending on AI SDK version
-              const args = typeof toolCall.args === "string" ? JSON.parse(toolCall.args) : toolCall.args;
-              if (args?.move) aiMove = args.move;
+            const toolResult = JSON.parse(data);
+            const result = toolResult.result;
+            if (result?.fen) {
+              lastFen = result.fen;
+              if (Array.isArray(result.moveHistory)) lastMoveHistory = result.moveHistory;
             }
           } catch { /* ignore */ }
-        } else if (typeCode === "a") {
-          // Tool result — fallback: extract move from result if we missed it in the call
-          if (!aiMove) {
-            try {
-              const toolResult = JSON.parse(data);
-              const result = toolResult.result;
-              if (result?.lastMove) {
-                console.debug("[chess-ai] extracting move from tool result:", result.lastMove);
-                aiMove = result.lastMove;
-              }
-            } catch { /* ignore */ }
-          }
         }
       }
     }
 
-    // Last resort: extract move from commentary text (e.g. "I played e5" or "I'll play Nf3")
-    if (!aiMove && commentary) {
-      const moveMatch = commentary.match(/\b(?:I(?:'ll)?\s+(?:play|played|respond with|move)\s+)([A-Za-z][a-z]?\d(?:x[a-z]\d)?(?:=[QRBN])?[+#]?)\b/i);
-      if (moveMatch) {
-        console.debug("[chess-ai] Fallback: extracted move from text:", moveMatch[1]);
-        aiMove = moveMatch[1];
-      }
-    }
-
-    return { move: aiMove, commentary };
+    console.debug("[chess-ai] Final FEN:", lastFen, "| moves:", lastMoveHistory.length, "| commentary length:", commentary.length);
+    return { fen: lastFen, moveHistory: lastMoveHistory, commentary };
   } catch {
-    return { move: null, commentary: "" };
+    return { fen: null, moveHistory: [], commentary: "" };
   }
 }
 
@@ -137,7 +119,7 @@ const AppPanel: FC = () => {
       switch (data.type) {
         case "app:ready":
           iframeRef.current?.contentWindow?.postMessage(
-            { type: "app:init", sessionId: activeApp.toolCallId, config: { appId: activeApp.appId, appName: activeApp.appName } },
+            { type: "app:init", sessionId: activeApp.sessionId, config: { appId: activeApp.appId, appName: activeApp.appName } },
             "*"
           );
           // Restore last known state so the app can recover after iframe reload
@@ -170,10 +152,12 @@ const AppPanel: FC = () => {
           if (data.state?.moveHistory) {
             const moves = data.state.moveHistory as string[];
             const lastMove = moves[moves.length - 1];
-            const isUserMove = moves.length % 2 === 1;
             const isNewMove = lastMove && lastMove !== lastMoveRef.current;
+            // Only trigger AI when it's black's turn (user plays white, AI plays black)
+            const turn = data.state.turn as string | undefined;
+            const isAiTurn = turn === "black" || turn === "b";
 
-            if (lastMove && isNewMove && isUserMove && !requestingAiMoveRef.current) {
+            if (lastMove && isNewMove && isAiTurn && !requestingAiMoveRef.current) {
               lastMoveRef.current = lastMove;
               requestingAiMoveRef.current = true;
               setAiStatus("AI is thinking...");
@@ -186,20 +170,23 @@ const AppPanel: FC = () => {
 
               requestAiChessMove(
                 conversationIdRef.current,
-                `${userText} Your turn! Make your move using the make_move tool.`,
+                `${userText} Your turn! Make your move using the chess_make_move tool.`,
                 appContext
               )
-                .then(({ move, commentary }) => {
-                  console.debug("[chess-ai] AI response — move:", move, "commentary length:", commentary.length);
-                  // Relay move to the board
-                  if (move && iframeRef.current?.contentWindow) {
-                    console.debug("[chess-ai] Relaying move to iframe:", move);
+                .then(({ fen, moveHistory: aiMoveHistory, commentary }) => {
+                  console.debug("[chess-ai] AI response — fen:", fen, "moves:", aiMoveHistory.length);
+                  // Restore board to the server's FEN (includes the AI's move)
+                  if (fen && iframeRef.current?.contentWindow) {
                     iframeRef.current.contentWindow.postMessage(
-                      { type: "tool:invoke", id: `ai-move-${Date.now()}`, tool: "make_move", params: { move } },
+                      { type: "state:restore", state: { fen, moveHistory: aiMoveHistory } },
                       "*"
                     );
-                  } else if (!move) {
-                    console.warn("[chess-ai] No move extracted from AI response");
+                    // Update lastMoveRef so we don't re-trigger on the restored state
+                    if (aiMoveHistory.length > 0) {
+                      lastMoveRef.current = aiMoveHistory[aiMoveHistory.length - 1];
+                    }
+                  } else if (!fen) {
+                    console.warn("[chess-ai] No FEN in AI response — move may not have been made");
                   }
                   // Push commentary to the main chat
                   if (commentary) {
@@ -252,13 +239,6 @@ const AppPanel: FC = () => {
         </ActionIcon>
       </Group>
 
-      {aiStatus && (
-        <Group px="sm" py={4} gap={6} style={{ background: "var(--chatbox-background-secondary, #f5f5f5)" }}>
-          <Loader size={12} />
-          <Text size="xs" c="dimmed">{aiStatus}</Text>
-        </Group>
-      )}
-
       <Box style={{ flex: 1, overflow: "hidden" }}>
         <iframe
           ref={iframeRef}
@@ -268,6 +248,7 @@ const AppPanel: FC = () => {
           title={activeApp.appName}
         />
       </Box>
+
     </Box>
   );
 };

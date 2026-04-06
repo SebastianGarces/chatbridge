@@ -10,14 +10,21 @@ type ToolHandler = (
 class ChatBridgeApp {
   private handlers = new Map<string, ToolHandler>();
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private boundHandler: (e: MessageEvent) => void;
   public restoreHandlers: Array<(state: Record<string, unknown>) => void> = [];
 
   constructor() {
-    window.addEventListener("message", this.handleMessage.bind(this));
+    this.boundHandler = this.handleMessage.bind(this);
+    window.addEventListener("message", this.boundHandler);
     this.heartbeatInterval = setInterval(() => {
       window.parent.postMessage({ type: "heartbeat" }, "*");
     }, 5000);
     window.parent.postMessage({ type: "app:ready" }, "*");
+  }
+
+  destroy() {
+    window.removeEventListener("message", this.boundHandler);
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
   }
 
   onToolInvoke(name: string, handler: ToolHandler) {
@@ -214,8 +221,23 @@ function App() {
         gameRef.current = restored;
         setGame(restored);
         setGameStarted(true);
-        const history = restored.history();
-        setMoveHistory(history);
+
+        // FEN restore loses history — keep local history and append new moves from server
+        const serverMoves = Array.isArray(state.moveHistory) ? state.moveHistory as string[] : [];
+        setMoveHistory((prev) => {
+          // Find moves the server has that we don't (typically just the AI's last move)
+          if (serverMoves.length > prev.length) {
+            return serverMoves; // Server has more — use its history
+          }
+          if (serverMoves.length > 0) {
+            const lastServerMove = serverMoves[serverMoves.length - 1];
+            if (prev[prev.length - 1] !== lastServerMove) {
+              return [...prev, lastServerMove]; // Append AI's move
+            }
+          }
+          return prev; // No change needed
+        });
+
         const turn = restored.turn() === "w" ? "white" : "black";
         if (restored.isCheckmate()) {
           setStatus(`Checkmate! ${turn === "white" ? "Black" : "White"} wins!`);
@@ -236,6 +258,10 @@ function App() {
       );
       return { resigned: true, winner };
     });
+
+    return () => {
+      app.destroy();
+    };
   }, []);
 
   // Handle user making a move on the board
@@ -297,7 +323,7 @@ function App() {
   });
 
   return (
-    <div ref={containerRef} style={{ padding: 16, margin: "0 auto" }}>
+    <div ref={containerRef} style={{ padding: 16, margin: "0 auto", minHeight: "100vh", background: "#1a1a2e", color: "#e0e0e0" }}>
       <div
         style={{
           display: "flex",
@@ -307,7 +333,7 @@ function App() {
         }}
       >
         <strong style={{ fontSize: 14 }}>Chess</strong>
-        <span style={{ fontSize: 12, color: "#666" }}>{status}</span>
+        <span style={{ fontSize: 12, color: "#aaa" }}>{status}</span>
       </div>
 
       <Chessboard
@@ -316,21 +342,35 @@ function App() {
         boardOrientation={boardOrientation}
         boardWidth={boardWidth}
         customBoardStyle={{
-          borderRadius: "4px",
-          boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
+          borderRadius: "8px",
+          boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
         }}
+        customDarkSquareStyle={{ backgroundColor: "#779952" }}
+        customLightSquareStyle={{ backgroundColor: "#edeed1" }}
       />
 
-      {moveHistory.length > 0 && (
-        <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>
-          <strong>Moves:</strong>{" "}
-          {moveHistory
-            .map((m, i) =>
-              i % 2 === 0
-                ? `${Math.floor(i / 2) + 1}. ${m}`
-                : m
-            )
-            .join(" ")}
+      {/* Moves — fixed height to prevent layout shift */}
+      <div style={{ marginTop: 8, fontSize: 12, color: "#888", minHeight: 20 }}>
+        {moveHistory.length > 0 && (
+          <>
+            <strong>Moves:</strong>{" "}
+            {moveHistory
+              .map((m, i) =>
+                i % 2 === 0
+                  ? `${Math.floor(i / 2) + 1}. ${m}`
+                  : m
+              )
+              .join(" ")}
+          </>
+        )}
+      </div>
+
+      {/* AI thinking indicator */}
+      {gameStarted && !gameRef.current.isGameOver() && gameRef.current.turn() === "b" && (
+        <div style={{ marginTop: 8, fontSize: 13, color: "#6366f1", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#6366f1", animation: "pulse 1.5s ease-in-out infinite" }} />
+          AI is thinking...
+          <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
         </div>
       )}
     </div>

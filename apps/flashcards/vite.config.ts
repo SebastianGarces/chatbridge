@@ -6,5 +6,9 @@ export default defineConfig({
   base: process.env.VITE_BASE || "/",
   server: {
     port: 5175,
+    // Allow iframe embedding from any origin (needed for Chatbox Electron)
+    headers: {
+      "X-Frame-Options": "ALLOWALL",
+    },
   },
 });
