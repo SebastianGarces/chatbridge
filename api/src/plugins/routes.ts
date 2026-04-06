@@ -1,4 +1,4 @@
-import { Elysia } from "elysia";
+import { Elysia, t } from "elysia";
 import { db, schema } from "../db";
 import { eq } from "drizzle-orm";
 import { getSessionUser } from "../chat/middleware";
@@ -42,4 +42,32 @@ export const appRoutes = new Elysia({ prefix: "/api/apps" })
       type: app.type,
       tools: config.tools || [],
     };
+  })
+
+  // Admin: update app review status
+  .patch("/:id/review", async ({ request, params, body }) => {
+    const user = await getSessionUser(request);
+    if (!user) return new Response("Unauthorized", { status: 401 });
+
+    const { status } = body as { status: string };
+    if (!["pending", "approved", "rejected"].includes(status)) {
+      return new Response("Invalid status. Must be pending, approved, or rejected.", { status: 400 });
+    }
+
+    const [app] = await db
+      .select()
+      .from(schema.appRegistrations)
+      .where(eq(schema.appRegistrations.id, params.id));
+
+    if (!app) return new Response("Not found", { status: 404 });
+
+    await db
+      .update(schema.appRegistrations)
+      .set({
+        reviewStatus: status as "pending" | "approved" | "rejected",
+        enabled: status === "approved",
+      })
+      .where(eq(schema.appRegistrations.id, params.id));
+
+    return { id: app.id, name: app.name, reviewStatus: status, enabled: status === "approved" };
   });

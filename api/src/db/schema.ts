@@ -95,6 +95,7 @@ export const appRegistrations = pgTable("app_registrations", {
   authType: authTypeEnum("auth_type").notNull().default("none"),
   config: jsonb("config").notNull().default({}),
   enabled: boolean("enabled").notNull().default(true),
+  reviewStatus: appReviewStatusEnum("review_status").notNull().default("approved"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -114,6 +115,26 @@ export const userAppTokens = pgTable("user_app_tokens", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("user_app_tokens_user_app_idx").on(table.userId, table.appId),
+]);
+
+// ─── OAuth state (CSRF) ───────────────────────────────────────────
+
+export const oauthStates = pgTable("oauth_states", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  state: text("state").notNull().unique(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ─── App review status ────────────────────────────────────────────
+
+export const appReviewStatusEnum = pgEnum("app_review_status", [
+  "pending",
+  "approved",
+  "rejected",
 ]);
 
 export const toolInvocationStatusEnum = pgEnum("tool_invocation_status", [

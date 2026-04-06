@@ -1,5 +1,5 @@
 import { db, schema } from "../db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { tool } from "ai";
 import { z } from "zod";
 import { MCPAdapter } from "./mcp-adapter";
@@ -142,7 +142,7 @@ export async function getPluginTools(conversationId?: string, appContext?: Recor
   const apps = await db
     .select()
     .from(schema.appRegistrations)
-    .where(eq(schema.appRegistrations.enabled, true));
+    .where(and(eq(schema.appRegistrations.enabled, true), eq(schema.appRegistrations.reviewStatus, "approved")));
 
   const tools: Record<string, ReturnType<typeof tool>> = {};
 

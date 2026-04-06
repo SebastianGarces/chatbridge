@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { randomBytes } from "crypto";
-import { eq, and } from "drizzle-orm";
+import { eq, and, lt } from "drizzle-orm";
 import { getSessionUser } from "../../chat/middleware";
 import { db, schema } from "../../db";
 import { encrypt } from "../../db/crypto";
@@ -10,20 +10,7 @@ const NOTION_CLIENT_ID = process.env.NOTION_CLIENT_ID || "";
 const NOTION_CLIENT_SECRET = process.env.NOTION_CLIENT_SECRET || "";
 const NOTION_REDIRECT_URI = `${process.env.BETTER_AUTH_URL || "http://localhost:3001"}/api/apps/notion/oauth/callback`;
 
-// In-memory state store for CSRF protection
-// Maps state -> { userId, timestamp }
-const pendingStates = new Map<string, { userId: string; timestamp: number }>();
 const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-// Clean up expired states periodically
-function cleanupStates() {
-  const now = Date.now();
-  for (const [state, { timestamp }] of pendingStates) {
-    if (now - timestamp > STATE_TTL_MS) {
-      pendingStates.delete(state);
-    }
-  }
-}
 
 export const notionOAuthRoutes = new Elysia({ prefix: "/api/apps/notion/oauth" })
   // Get OAuth status
@@ -81,12 +68,13 @@ export const notionOAuthRoutes = new Elysia({ prefix: "/api/apps/notion/oauth" }
       );
     }
 
-    // Generate random state for CSRF protection
+    // Generate random state for CSRF protection, stored in Postgres
     const state = randomBytes(32).toString("hex");
-    pendingStates.set(state, { userId: user.id, timestamp: Date.now() });
+    const expiresAt = new Date(Date.now() + STATE_TTL_MS);
+    await db.insert(schema.oauthStates).values({ state, userId: user.id, expiresAt });
 
-    // Clean up old states
-    cleanupStates();
+    // Clean up expired states
+    await db.delete(schema.oauthStates).where(lt(schema.oauthStates.expiresAt, new Date()));
 
     const authUrl =
       `https://api.notion.com/v1/oauth/authorize` +
@@ -110,20 +98,19 @@ export const notionOAuthRoutes = new Elysia({ prefix: "/api/apps/notion/oauth" }
       return new Response("Missing state parameter", { status: 400 });
     }
 
-    // Validate state and retrieve userId
-    const pending = pendingStates.get(state);
-    if (!pending) {
+    // Validate state from Postgres and retrieve userId
+    const [pending] = await db
+      .select()
+      .from(schema.oauthStates)
+      .where(eq(schema.oauthStates.state, state));
+
+    if (!pending || pending.expiresAt < new Date()) {
+      if (pending) await db.delete(schema.oauthStates).where(eq(schema.oauthStates.id, pending.id));
       return new Response("Invalid or expired state parameter", { status: 400 });
     }
 
-    // Check TTL
-    if (Date.now() - pending.timestamp > STATE_TTL_MS) {
-      pendingStates.delete(state);
-      return new Response("State expired, please try again", { status: 400 });
-    }
-
     const userId = pending.userId;
-    pendingStates.delete(state);
+    await db.delete(schema.oauthStates).where(eq(schema.oauthStates.id, pending.id));
 
     // Exchange code for token
     const tokenRes = await fetch("https://api.notion.com/v1/oauth/token", {
